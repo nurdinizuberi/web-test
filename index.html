@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Private Novel Reader (100% Free)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #111827;
+      --sidebar: #1f2937;
+      --accent: #2563eb;
+    }
+
+    body.dark {
+      --bg: #0f172a;
+      --text: #e5e7eb;
+      --sidebar: #020617;
+      --accent: #38bdf8;
+    }
+
+    body {
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .sidebar {
+      width: 260px;
+      background: var(--sidebar);
+      color: #fff;
+      padding: 15px;
+      overflow-y: auto;
+    }
+
+    .chapter {
+      padding: 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 5px;
+    }
+
+    .chapter:hover { background: rgba(255,255,255,0.1); }
+    .chapter.active { background: var(--accent); }
+
+    .reader {
+      flex: 1;
+      padding: 20px 40px;
+      overflow-y: auto;
+    }
+
+    textarea {
+      width: 100%;
+      height: 200px;
+      margin-top: 10px;
+    }
+
+    .controls button { margin-right: 5px; }
+  </style>
+</head>
+<body>
+<div class="sidebar">
+  <h3>Chapters</h3>
+  <div id="chapterList"></div>
+  <button id="addChapterBtn">+ Add Chapter</button>
+</div>
+
+<div class="reader">
+  <div class="controls">
+    <button id="toggleDarkBtn">🌙</button>
+    <button id="fontIncBtn">A+</button>
+    <button id="fontDecBtn">A-</button>
+    <button id="lineIncBtn">↕+</button>
+    <button id="lineDecBtn">↕-</button>
+  </div>
+
+  <h1 id="title"><span id="titleText"></span> <span id="titleStatus" style="font-size:0.7em;margin-left:12px;opacity:0.9;vertical-align:middle"></span></h1>
+  <div id="content" style="white-space: pre-line;"></div>
+
+  <div id="editorSection" style="display: none;">
+    <h3>Edit Chapter</h3>
+    <textarea id="editor"></textarea><br>
+    <button id="saveBtn">💾 Save</button>
+    <span id="editorSync" style="margin-left:8px;opacity:0.9"></span>
+  </div>
+
+  <button id="editButton" style="display: none;">✏️ Edit Chapter</button>
+</div>
+
+<script type="module">
+  // Load optional local config file (copy `supabase-config.example.js` -> `supabase-config.js` with your keys)
+  // `supabase-config.js` is gitignored by default to avoid committing secrets.
+    // Use dynamic import without top-level await to avoid parse-time failures in environments
+    // that don't support top-level await in modules.
+    import('./supabase-config.js')
+      .then(mod => { try { if (typeof mod.validate === 'function') mod.validate(); } catch (e) { /* ignore */ } })
+      .catch(() => { /* no local config present — continue without Supabase */ });
+
+  console.log('App script loaded');
+
+  // Pre-bind safe stubs so inline onclicks never fail even if initialization later errors
+  // These will be replaced with real implementations after script initialization.
+  window.newChapter = window.newChapter || function() { console.warn('newChapter not ready'); };
+  window.toggleDark = window.toggleDark || function() { console.warn('toggleDark not ready'); };
+  window.changeFont = window.changeFont || function() { console.warn('changeFont not ready'); };
+  window.changeLine = window.changeLine || function() { console.warn('changeLine not ready'); };
+  window.saveChapter = window.saveChapter || function() { console.warn('saveChapter not ready'); };
+  window.enableEditor = window.enableEditor || function() { console.warn('enableEditor not ready'); };
+
+  // Helpful click debugging while we diagnose unresponsiveness
+  document.addEventListener('click', (e) => console.debug('DOM click:', e.target && (e.target.id || e.target.tagName || e.target.innerText)));
+
+  // Supabase integration (only if config provided on window)
+  // Load the supabase client dynamically only when needed so a CDN failure doesn't prevent the page
+  // from parsing and the rest of the script from executing (which would make inline handlers fail).
+  const SUPABASE_URL = window.SUPABASE_URL || 'https://sojqynzunkacykxqhkgy.supabase.co';
+  const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNvanF5bnp1bmthY3lreHFoa2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDY5ODksImV4cCI6MjA4MTYyMjk4OX0.6gyYxbsRxoQQ97xVf1ENCtz0Qt1AlLS0NUr5-BDibSk';
+  const useSupabase = SUPABASE_URL !== 'https://sojqynzunkacykxqhkgy.supabase.co' && SUPABASE_ANON_KEY !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNvanF5bnp1bmthY3lreHFoa2d5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNDY5ODksImV4cCI6MjA4MTYyMjk4OX0.6gyYxbsRxoQQ97xVf1ENCtz0Qt1AlLS0NUr5-BDibSk';
+  let supabase = null; // will b<YOUR_SUPABASE_ANON_KEY>'e set after dynamic import if useSupabase
+
+    // Global error hooks to help debug if the module fails at runtime
+    window.addEventListener('error', (ev) => console.error('App error:', ev.error || ev.message, ev));
+    window.addEventListener('unhandledrejection', (ev) => console.error('Unhandled promise rejection:', ev.reason));
+  /* ===============================
+     Updated STORAGE METHOD: localStorage
+     =============================== */
+
+  const STORAGE_KEY = "novel_chapters";
+
+  // In-memory representation of chapters; objects may include `id` when synced with Supabase
+  // chapters: { id?, title, text, _sync } where _sync in {'synced','syncing','local','failed'}
+  let chapters = [];
+  let currentIndex = null;
+  let fontSize = 16;
+  let lineHeight = 1.8;
+
+  function saveToLocal() {
+    // store a trimmed copy (omit transient _sync state if desired)
+    const copy = chapters.map(c => ({ id: c.id, title: c.title, text: c.text }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
+  }
+
+  // Fetch chapters from Supabase if configured, otherwise use localStorage
+  async function loadChapters() {
+    // Try Supabase first
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('chapters').select('id,title,text,created_at').order('created_at', { ascending: true });
+        if (error) throw error;
+        chapters = data.map(d => ({ id: d.id, title: d.title, text: d.text || '', _sync: 'synced' }));
+        // Mirror locally as a fallback
+        saveToLocal();
+        renderList();
+        return;
+      } catch (err) {
+        console.warn('Supabase fetch failed, falling back to localStorage', err);
+      }
+    }
+
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    chapters = raw.map(d => ({ id: d.id, title: d.title, text: d.text || '', _sync: d.id ? 'local' : 'local' }));
+    renderList();
+  }
+
+  // loadChapters defined above
+
+  function renderList() {
+    const list = document.getElementById('chapterList');
+    list.innerHTML = '';
+    chapters.forEach((c, i) => {
+      const div = document.createElement('div');
+      div.className = 'chapter';
+      // Title and status
+      const titleSpan = document.createElement('span');
+      titleSpan.innerText = c.title;
+      const statusSpan = document.createElement('span');
+      statusSpan.style.float = 'right';
+      statusSpan.style.opacity = '0.9';
+      statusSpan.style.fontSize = '0.9em';
+      statusSpan.style.marginLeft = '8px';
+      statusSpan.innerText = syncEmoji(c._sync);
+      div.appendChild(titleSpan);
+      div.appendChild(statusSpan);
+      div.title = (c._sync === 'failed') ? 'Sync failed — click to retry' : '';
+      div.onclick = () => openChapter(i, div);
+      list.appendChild(div);
+    });
+  }
+
+  function newChapter() {
+    const title = prompt('Chapter title');
+    if (!title) return;
+
+    const idx = chapters.length;
+    chapters.push({ title, text: '', _sync: useSupabase ? 'syncing' : 'local' });
+    renderList();
+    // open the new chapter in the UI
+    const el = document.querySelectorAll('.chapter')[idx];
+    if (el) openChapter(idx, el);
+
+    // Persist
+    (async () => {
+      if (!supabase) { saveToLocal(); return; }
+      try {
+        const { data, error } = await supabase.from('chapters').insert([{ title, text: '' }]).select('id,title,text').single();
+        if (error) throw error;
+        chapters[idx].id = data.id;
+        chapters[idx]._sync = 'synced';
+        saveToLocal();
+        renderList();
+        updateTitleStatus();
+      } catch (err) {
+        console.warn('Failed to save new chapter to Supabase, kept locally', err);
+        chapters[idx]._sync = 'failed';
+        saveToLocal();
+        renderList();
+        updateTitleStatus();
+      }
+    })();
+  }
+
+  function syncEmoji(state) {
+    switch (state) {
+      case 'synced': return '✓';
+      case 'syncing': return '⏳';
+      case 'failed': return '⚠';
+      case 'local': return '●';
+      default: return '';
+    }
+  }
+
+  function openChapter(i, el) {
+    currentIndex = i;
+    document.querySelectorAll('.chapter').forEach(c => c.classList.remove('active'));
+    if (el) el.classList.add('active');
+    const chap = chapters[i];
+    document.getElementById('titleText').innerText = chap.title;
+    // Update title status indicator
+    updateTitleStatus();
+    document.getElementById('content').innerText = chap.text;
+    document.getElementById('editor').value = chap.text;
+
+    // Hide editor section and show edit button
+    document.getElementById('editorSection').style.display = 'none';
+    document.getElementById('editButton').style.display = 'block';
+  }
+
+  function updateTitleStatus() {
+    const span = document.getElementById('titleStatus');
+    if (!span) return;
+    if (currentIndex === null) { span.innerText = ''; return; }
+    const s = chapters[currentIndex] && chapters[currentIndex]._sync;
+    span.innerText = syncEmoji(s) + (s === 'failed' ? ' (failed)' : '');
+    updateEditorStatus();
+  }
+
+  function updateEditorStatus() {
+    const s = (currentIndex !== null && chapters[currentIndex]) ? chapters[currentIndex]._sync : null;
+    const el = document.getElementById('editorSync');
+    if (!el) return;
+    el.innerText = s ? (syncEmoji(s) + (s === 'failed' ? ' ' + s : '')) : '';
+  }
+  
+
+  function saveChapter() {
+    if (currentIndex === null) return;
+    const newText = document.getElementById('editor').value;
+    chapters[currentIndex].text = newText;
+    document.getElementById('content').innerText = newText;
+
+    // Persist change
+    (async () => {
+      const chapter = chapters[currentIndex];
+      if (supabase) {
+        chapter._sync = 'syncing';
+        renderList();
+        updateTitleStatus();
+        try {
+          if (chapter.id) {
+            const { error } = await supabase.from('chapters').update({ text: chapter.text }).eq('id', chapter.id);
+            if (error) throw error;
+          } else {
+            const { data, error } = await supabase.from('chapters').insert([{ title: chapter.title, text: chapter.text }]).select('id').single();
+            if (error) throw error;
+            chapter.id = data.id;
+          }
+          chapter._sync = 'synced';
+          saveToLocal();
+          renderList();
+          updateTitleStatus();
+        } catch (err) {
+          console.warn('Failed to save to Supabase; saved locally instead', err);
+          chapter._sync = 'failed';
+          saveToLocal();
+          renderList();
+          updateTitleStatus();
+        }
+      } else {
+        chapter._sync = 'local';
+        saveToLocal();
+        renderList();
+      }
+    })();
+
+    // Hide editor section and show edit button
+    document.getElementById('editorSection').style.display = 'none';
+    document.getElementById('editButton').style.display = 'block';
+  }
+
+  function enableEditor() {
+    document.getElementById('editorSection').style.display = 'block';
+    document.getElementById('editButton').style.display = 'none';
+  }
+
+  // Retry sync for a specific chapter (called when user clicks failed entry)
+  async function retrySync(index) {
+    const chapter = chapters[index];
+    if (!supabase) return;
+    chapter._sync = 'syncing';
+    renderList();
+    updateTitleStatus();
+    try {
+      if (chapter.id) {
+        const { error } = await supabase.from('chapters').update({ text: chapter.text, title: chapter.title }).eq('id', chapter.id);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.from('chapters').insert([{ title: chapter.title, text: chapter.text }]).select('id').single();
+        if (error) throw error;
+        chapter.id = data.id;
+      }
+      chapter._sync = 'synced';
+      saveToLocal();
+      renderList();
+      updateTitleStatus();
+    } catch (err) {
+      chapter._sync = 'failed';
+      saveToLocal();
+      renderList();
+      updateTitleStatus();
+    }
+  }
+
+  function toggleDark() { document.body.classList.toggle('dark'); }
+  function changeFont(v) {
+    fontSize += v;
+    document.getElementById('content').style.fontSize = fontSize + 'px';
+  }
+  function changeLine(v) {
+    lineHeight += v;
+    document.getElementById('content').style.lineHeight = lineHeight;
+  }
+
+  // Initialize: try Supabase first, else load local copy
+  // Attach click handler to allow retry when clicking a failed item
+  document.getElementById('chapterList').addEventListener('click', (ev) => {
+    const el = ev.target.closest('.chapter');
+    if (!el) return;
+    const idx = Array.from(document.querySelectorAll('.chapter')).indexOf(el);
+    if (idx >= 0 && chapters[idx] && chapters[idx]._sync === 'failed' && supabase) {
+      if (confirm('Retry syncing this chapter with Supabase?')) retrySync(idx);
+    }
+  });
+  // Expose functions to global scope so inline `onclick` attributes work
+  window.newChapter = newChapter;
+  window.toggleDark = toggleDark;
+  window.changeFont = changeFont;
+  window.changeLine = changeLine;
+  window.saveChapter = saveChapter;
+  window.enableEditor = enableEditor;
+
+  // Attach listeners to buttons (safer than inline handlers)
+  try {
+    document.getElementById('addChapterBtn')?.addEventListener('click', newChapter);
+    document.getElementById('toggleDarkBtn')?.addEventListener('click', toggleDark);
+    document.getElementById('fontIncBtn')?.addEventListener('click', () => changeFont(1));
+    document.getElementById('fontDecBtn')?.addEventListener('click', () => changeFont(-1));
+    document.getElementById('lineIncBtn')?.addEventListener('click', () => changeLine(0.2));
+    document.getElementById('lineDecBtn')?.addEventListener('click', () => changeLine(-0.2));
+    document.getElementById('saveBtn')?.addEventListener('click', saveChapter);
+    document.getElementById('editButton')?.addEventListener('click', enableEditor);
+  } catch (e) { console.warn('Failed to attach button listeners', e); }
+
+  // Initialize Supabase client dynamically if configured, then load chapters
+  if (useSupabase) {
+    import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm')
+      .then(mod => {
+        try {
+          supabase = mod.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+          console.log('Supabase client loaded');
+        } catch (e) { console.warn('Create client failed', e); supabase = null; }
+        loadChapters();
+      })
+      .catch(err => {
+        console.warn('Failed to load Supabase client; continuing offline', err);
+        loadChapters();
+      });
+  } else {
+    loadChapters();
+  }
+</script>
+
+</body>
+</html>

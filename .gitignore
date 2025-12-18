@@ -1,0 +1,2 @@
+# Ignore any local Supabase config with secrets
+supabase-config.js
