@@ -44,6 +44,7 @@
       border-right: 1px solid #ddd;
       padding: 14px;
       overflow-y: auto;
+      transition: transform 0.3s ease;
     }
 
     #main {
@@ -106,10 +107,53 @@
 
     #editBtn { margin-top: 30px; display: none; }
 
+    #collapseBtn {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 100;
+      display: none;
+    }
+
     @media (max-width: 768px) {
       body { flex-direction: column; }
-      #sidebar { width: 100%; border-right: none; border-bottom: 1px solid #ddd; }
-      #main { max-width: 100%; }
+      #sidebar { 
+        width: 100%; 
+        border-right: none; 
+        border-bottom: 1px solid #ddd;
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        z-index: 10;
+        transform: translateX(0);
+      }
+      #main { 
+        max-width: 100%;
+        margin-left: 0;
+      }
+      #collapseBtn {
+        display: block;
+      }
+      .sidebar-hidden #sidebar {
+        transform: translateX(-100%);
+      }
+    }
+
+    @media (min-width: 769px) {
+      .sidebar-hidden #sidebar {
+        width: 0;
+        padding: 0;
+        border-right: none;
+        overflow: hidden;
+      }
+      .sidebar-hidden #main {
+        max-width: 100%;
+        margin: 0 auto;
+      }
+      #collapseBtn {
+        display: block;
+      }
     }
   </style>
 </head>
@@ -128,6 +172,8 @@
 </div>
 
 <div id="main">
+  <button id="collapseBtn" class="secondary-btn">☰</button>
+  
   <div class="toolbar">
     <button id="themeBtn" class="secondary-btn">🌓</button>
     <button id="fontInc" class="secondary-btn">A+</button>
@@ -173,6 +219,7 @@
   const editorText = document.getElementById('editorText');
   const editBtn = document.getElementById('editBtn');
   const addChapterBtn = document.getElementById('addChapterBtn');
+  const collapseBtn = document.getElementById('collapseBtn');
 
   let currentNovel = null;
   let currentChapter = null;
@@ -280,6 +327,11 @@
 
   document.getElementById('themeBtn').onclick = () => {
     document.body.className = themes[++themeIndex % themes.length];
+  };
+
+  // Collapse button functionality
+  collapseBtn.onclick = () => {
+    document.body.classList.toggle('sidebar-hidden');
   };
 
   loadNovels();
